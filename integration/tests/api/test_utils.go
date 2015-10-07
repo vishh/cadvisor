@@ -15,11 +15,22 @@
 package api
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	info "github.com/google/cadvisor/info/v1"
 	"github.com/stretchr/testify/assert"
+)
+
+const (
+	_ = 1 << (10 * iota)
+	Kibi
+	Mebi
+	Gibi
+	Tebi
+	Pebi
+	Exbi
 )
 
 // Checks that expected and actual are within delta of each other.
@@ -59,4 +70,20 @@ func checkMemoryStats(t *testing.T, stat info.MemoryStats) {
 		t.Errorf("Memory working set (%d) should be at most equal to memory usage (%d)", stat.WorkingSet, stat.Usage)
 	}
 	// TODO(vmarmol): Add checks for ContainerData and HierarchicalData
+}
+
+func checkFilesystemStats(fsStats []info.FsStats, minUsage, maxUsage uint64) error {
+	if len(fsStats) == 0 {
+		return fmt.Errorf("No filesystem stats found.")
+	}
+	var totalUsage uint64
+	for _, stat := range fsStats {
+		totalUsage += stat.Usage
+	}
+	if minUsage > 0 && totalUsage < minUsage {
+		return fmt.Errorf("Expected minimum filesystem usage of %d; actual usage: %d", minUsage, totalUsage)
+	} else if maxUsage > 0 && totalUsage > maxUsage {
+		return fmt.Errorf("Expected maximum filesystem usage of %d; actual usage: %d", maxUsage, totalUsage)
+	}
+	return nil
 }

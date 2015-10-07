@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,8 +36,19 @@ func sanityCheck(alias string, containerInfo info.ContainerInfo, t *testing.T) {
 	assert.NotEmpty(t, containerInfo.Stats, "Expected container to have stats")
 }
 
-// Waits up to 5s for a container with the specified alias to appear.
-func waitForContainer(alias string, fm framework.Framework) {
+func defaultStatValidation(alias string, cInfo *info.ContainerInfo) error {
+	if len(cInfo.Stats) != 1 {
+		return fmt.Errorf("no stats returned for container %q", alias)
+	}
+	return nil
+}
+
+func defaultWaitForContainer(alias string, fm framework.Framework) {
+	waitForContainer(alias, fm, 5*time.Second, defaultStatValidation)
+}
+
+// Waits up to timeout for a container with the specified alias to appear and validateFunc to succeed.
+func waitForContainer(alias string, fm framework.Framework, timeout time.Duration, validateFunc func(alias string, cInfo *info.ContainerInfo) error) {
 	err := framework.RetryForDuration(func() error {
 		ret, err := fm.Cadvisor().Client().DockerContainer(alias, &info.ContainerInfoRequest{
 			NumStats: 1,
@@ -44,12 +56,11 @@ func waitForContainer(alias string, fm framework.Framework) {
 		if err != nil {
 			return err
 		}
-		if len(ret.Stats) != 1 {
-			return fmt.Errorf("no stats returned for container %q", alias)
+		if err := validateFunc(alias, &ret); err != nil {
+			return err
 		}
-
 		return nil
-	}, 5*time.Second)
+	}, timeout)
 	require.NoError(fm.T(), err, "Timed out waiting for container %q to be available in cAdvisor: %v", alias, err)
 }
 
@@ -61,7 +72,7 @@ func TestDockerContainerById(t *testing.T) {
 	containerId := fm.Docker().RunPause()
 
 	// Wait for the container to show up.
-	waitForContainer(containerId, fm)
+	defaultWaitForContainer(containerId, fm)
 
 	request := &info.ContainerInfoRequest{
 		NumStats: 1,
@@ -84,7 +95,7 @@ func TestDockerContainerByName(t *testing.T) {
 	})
 
 	// Wait for the container to show up.
-	waitForContainer(containerName, fm)
+	defaultWaitForContainer(containerName, fm)
 
 	request := &info.ContainerInfoRequest{
 		NumStats: 1,
@@ -116,8 +127,8 @@ func TestGetAllDockerContainers(t *testing.T) {
 	// Wait for the containers to show up.
 	containerId1 := fm.Docker().RunPause()
 	containerId2 := fm.Docker().RunPause()
-	waitForContainer(containerId1, fm)
-	waitForContainer(containerId2, fm)
+	defaultWaitForContainer(containerId1, fm)
+	defaultWaitForContainer(containerId2, fm)
 
 	request := &info.ContainerInfoRequest{
 		NumStats: 1,
@@ -146,7 +157,7 @@ func TestBasicDockerContainer(t *testing.T) {
 	})
 
 	// Wait for the container to show up.
-	waitForContainer(containerId, fm)
+	defaultWaitForContainer(containerId, fm)
 
 	request := &info.ContainerInfoRequest{
 		NumStats: 1,
@@ -181,7 +192,7 @@ func TestDockerContainerSpec(t *testing.T) {
 	})
 
 	// Wait for the container to show up.
-	waitForContainer(containerId, fm)
+	defaultWaitForContainer(containerId, fm)
 
 	request := &info.ContainerInfoRequest{
 		NumStats: 1,
@@ -208,7 +219,7 @@ func TestDockerContainerCpuStats(t *testing.T) {
 
 	// Wait for the container to show up.
 	containerId := fm.Docker().RunBusybox("ping", "www.google.com")
-	waitForContainer(containerId, fm)
+	defaultWaitForContainer(containerId, fm)
 
 	request := &info.ContainerInfoRequest{
 		NumStats: 1,
@@ -230,7 +241,7 @@ func TestDockerContainerMemoryStats(t *testing.T) {
 
 	// Wait for the container to show up.
 	containerId := fm.Docker().RunBusybox("ping", "www.google.com")
-	waitForContainer(containerId, fm)
+	defaultWaitForContainer(containerId, fm)
 
 	request := &info.ContainerInfoRequest{
 		NumStats: 1,
@@ -243,6 +254,49 @@ func TestDockerContainerMemoryStats(t *testing.T) {
 	checkMemoryStats(t, containerInfo.Stats[0].Memory)
 }
 
+// Check the memory ContainerStats.
+func TestDockerContainerFilesystemStatsNoUsage(t *testing.T) {
+	fm := framework.New(t)
+	defer fm.Cleanup()
+	// TODO: Remove this check once fs stats are supported on all platforms.
+	if !strings.Contains(fm.Docker().Info(), "aufs") {
+		t.Skip("This test will run only with aufs storage backend.")
+	}
+	// Wait for the container to show up.
+	containerId := fm.Docker().RunBusybox("ping", "www.google.com")
+	// We need a longer timeout since cAdvisor can take upto a minute to pick up filesystem usage.
+	waitForContainer(containerId, fm, 5*time.Second, func(alias string, cInfo *info.ContainerInfo) error {
+		// Validate filesystem stats
+		if len(cInfo.Stats) == 0 {
+			return fmt.Errorf("No stats found for container %q", alias)
+		}
+		assert.NoError(t, checkFilesystemStats(cInfo.Stats[0].Filesystem, 0, 100*Kibi))
+		return nil
+	})
+}
+
+// Check the memory ContainerStats.
+func TestDockerContainerFilesystemStats(t *testing.T) {
+	fm := framework.New(t)
+	defer fm.Cleanup()
+	// TODO: Remove this check once fs stats are supported on all platforms.
+	if !strings.Contains(fm.Docker().Info(), "aufs") {
+		t.Skip("This test will run only with aufs storage backend.")
+	}
+
+	const minUsage = 10 * 100 * Mebi
+	// Wait for the container to show up.
+	containerId := fm.Docker().RunBusybox("/bin/sh", "-c", "dd if=/dev/zero of=/file bs=10M count=100 && sleep 10000")
+	// We need a longer timeout since cAdvisor can take upto a minute to pick up filesystem usage.
+	waitForContainer(containerId, fm, 2*time.Minute, func(alias string, cInfo *info.ContainerInfo) error {
+		// Validate filesystem stats
+		if len(cInfo.Stats) == 0 {
+			return fmt.Errorf("No stats found for container %q", alias)
+		}
+		return checkFilesystemStats(cInfo.Stats[0].Filesystem, minUsage, 0)
+	})
+}
+
 // Check the network ContainerStats.
 func TestDockerContainerNetworkStats(t *testing.T) {
 	fm := framework.New(t)
@@ -250,7 +304,7 @@ func TestDockerContainerNetworkStats(t *testing.T) {
 
 	// Wait for the container to show up.
 	containerId := fm.Docker().RunBusybox("watch", "-n1", "wget", "https://www.google.com/")
-	waitForContainer(containerId, fm)
+	defaultWaitForContainer(containerId, fm)
 
 	request := &info.ContainerInfoRequest{
 		NumStats: 1,

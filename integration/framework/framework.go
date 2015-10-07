@@ -113,6 +113,7 @@ type DockerActions interface {
 	//   -> docker run busybox ping www.google.com
 	Run(args DockerRunArgs, cmd ...string) string
 	RunStress(args DockerRunArgs, cmd ...string) string
+	Info() string
 }
 
 type ShellActions interface {
@@ -221,6 +222,13 @@ func (self dockerActions) RunBusybox(cmd ...string) string {
 	return self.Run(DockerRunArgs{
 		Image: "busybox",
 	}, cmd...)
+}
+
+func (self dockerActions) Info() string {
+	dockerCommand := []string{"docker", "info"}
+	output, _ := self.fm.Shell().Run("sudo", dockerCommand...)
+
+	return output
 }
 
 type DockerRunArgs struct {
