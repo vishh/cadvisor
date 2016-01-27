@@ -41,4 +41,7 @@ release: build
 docker:
 	@docker build -t cadvisor:$(shell git rev-parse --short HEAD) -f deploy/Dockerfile .
 
+docker-release: build
+	@./build/docker-release.sh
+
 .PHONY: all format build test vet docker
