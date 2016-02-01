@@ -176,7 +176,7 @@ func TestDockerContainerSpec(t *testing.T) {
 		Image: "kubernetes/pause",
 		Args: []string{
 			"--cpu-shares", strconv.FormatUint(cpuShares, 10),
-			"--cpuset", cpuMask,
+			"--cpuset-cpus", cpuMask,
 			"--memory", strconv.FormatUint(memoryLimit, 10),
 		},
 	})
