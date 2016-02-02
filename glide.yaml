@@ -99,7 +99,7 @@ import:
 - package: golang.org/x/exp
   version: d00e13ec443927751b2bd49e97dea7bf3b6a6487
   subpackages:
-  - inotify
+    - inotify
 - package: golang.org/x/net
   version: 5627bad10b821d907ac4dc81fb3535ec7dd81c2b
   subpackages:
